@@ -1,20 +1,33 @@
 package main
 
 import (
+	"errors"
 	"html/template"
 	"log"
 	"net/http"
 	"net/url"
 	"path"
-	"strings"
+	"regexp"
 
 	"github.com/salpreh/go-wiki/models"
 )
 
 var templatesPath string = "views"
 
+var templatesName []string = []string{
+	"edit.html",
+	"view.html",
+}
+
+var templates *template.Template
+var validPath *regexp.Regexp
+
 func viewHandler(w http.ResponseWriter, r *http.Request) {
-	title := getWikiPageTitle(*r.URL)
+	title, err := getWikiPageTitleOr404(w, r)
+	if err != nil {
+		return
+	}
+
 	page, err := models.LoadPage(title)
 
 	if err != nil {
@@ -22,26 +35,34 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	renderTemplate(w, "view.html", page)
+	renderTemplate(w, "view", page)
 }
 
 func editHandler(w http.ResponseWriter, r *http.Request) {
-	title := getWikiPageTitle(*r.URL)
+	title, err := getWikiPageTitleOr404(w, r)
+	if err != nil {
+		return
+	}
+
 	page, err := models.LoadPage(title)
 
 	if err != nil {
 		page = &models.Page{Title: title}
 	}
 
-	renderTemplate(w, "edit.html", page)
+	renderTemplate(w, "edit", page)
 }
 
 func saveHandler(w http.ResponseWriter, r *http.Request) {
-	title := getWikiPageTitle(*r.URL)
+	title, err := getWikiPageTitleOr404(w, r)
+	if err != nil {
+		return
+	}
+
 	body := r.FormValue("body")
 
 	page := models.Page{Title: title, Body: []byte(body)}
-	err := page.Save()
+	err = page.Save()
 
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -52,24 +73,43 @@ func saveHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func renderTemplate(w http.ResponseWriter, templateN string, p *models.Page) {
-	t, err := template.ParseFiles(path.Join(templatesPath, templateN))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	err = t.Execute(w, p)
-
+	err := templates.ExecuteTemplate(w, templateN+".html", p)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func getWikiPageTitle(url url.URL) string {
-	return strings.Join(strings.Split(url.Path, "/")[2:], "/")
+func getTemplates() []string {
+	var tmplPaths []string
+	for _, tmpl := range templatesName {
+		tmplPaths = append(tmplPaths, path.Join(templatesPath, tmpl))
+	}
+
+	return tmplPaths
+}
+
+func getWikiPageTitleOr404(w http.ResponseWriter, r *http.Request) (string, error) {
+	title, err := getWikiPageTitle(*r.URL)
+	if err != nil {
+		http.NotFound(w, r)
+	}
+
+	return title, err
+}
+
+func getWikiPageTitle(url url.URL) (string, error) {
+	m := validPath.FindStringSubmatch(url.Path)
+	if m == nil {
+		return "", errors.New("Invalid Page title")
+	}
+
+	return m[2], nil
 }
 
 func main() {
+	templates = template.Must(template.ParseFiles(getTemplates()...))
+	validPath = regexp.MustCompile("^/(edit|save|view)/([a-zA-Z0-9]+)$")
+
 	http.HandleFunc("/view/", viewHandler)
 	http.HandleFunc("/edit/", editHandler)
 	http.HandleFunc("/save/", saveHandler)
