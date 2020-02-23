@@ -22,12 +22,7 @@ var templatesName []string = []string{
 var templates *template.Template
 var validPath *regexp.Regexp
 
-func viewHandler(w http.ResponseWriter, r *http.Request) {
-	title, err := getWikiPageTitleOr404(w, r)
-	if err != nil {
-		return
-	}
-
+func viewHandler(w http.ResponseWriter, r *http.Request, title string) {
 	page, err := models.LoadPage(title)
 
 	if err != nil {
@@ -38,12 +33,7 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 	renderTemplate(w, "view", page)
 }
 
-func editHandler(w http.ResponseWriter, r *http.Request) {
-	title, err := getWikiPageTitleOr404(w, r)
-	if err != nil {
-		return
-	}
-
+func editHandler(w http.ResponseWriter, r *http.Request, title string) {
 	page, err := models.LoadPage(title)
 
 	if err != nil {
@@ -53,16 +43,11 @@ func editHandler(w http.ResponseWriter, r *http.Request) {
 	renderTemplate(w, "edit", page)
 }
 
-func saveHandler(w http.ResponseWriter, r *http.Request) {
-	title, err := getWikiPageTitleOr404(w, r)
-	if err != nil {
-		return
-	}
-
+func saveHandler(w http.ResponseWriter, r *http.Request, title string) {
 	body := r.FormValue("body")
 
 	page := models.Page{Title: title, Body: []byte(body)}
-	err = page.Save()
+	err := page.Save()
 
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -106,12 +91,23 @@ func getWikiPageTitle(url url.URL) (string, error) {
 	return m[2], nil
 }
 
+func makeHandler(fn func(http.ResponseWriter, *http.Request, string)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		title, err := getWikiPageTitleOr404(w, r)
+		if err != nil {
+			return
+		}
+
+		fn(w, r, title)
+	}
+}
+
 func main() {
 	templates = template.Must(template.ParseFiles(getTemplates()...))
 	validPath = regexp.MustCompile("^/(edit|save|view)/([a-zA-Z0-9]+)$")
 
-	http.HandleFunc("/view/", viewHandler)
-	http.HandleFunc("/edit/", editHandler)
-	http.HandleFunc("/save/", saveHandler)
+	http.HandleFunc("/view/", makeHandler(viewHandler))
+	http.HandleFunc("/edit/", makeHandler(editHandler))
+	http.HandleFunc("/save/", makeHandler(saveHandler))
 	log.Fatalln(http.ListenAndServe(":8080", nil))
 }
